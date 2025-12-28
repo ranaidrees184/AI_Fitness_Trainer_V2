@@ -44,8 +44,8 @@ const AIChatbot = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Backend API URL - Update this to your FastAPI server URL
-  const API_BASE_URL = "https://fitbot-api-cks6.onrender.com"; // Deployed backend on Render
+  // Backend API URL - Uses environment variable or defaults to Render deployment
+  const API_BASE_URL = import.meta.env.VITE_FITBOT_API_URL || "https://fitbot-api-cks6.onrender.com";
 
   useEffect(() => {
     checkAuth();
@@ -163,81 +163,62 @@ const AIChatbot = () => {
     }
   };
 
-  const handleVoiceInput = async () => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+  // Browser-native Speech Recognition (STT) - No API needed!
+  const handleVoiceInputBrowser = () => {
+    // @ts-ignore - webkitSpeechRecognition is not in TypeScript types
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
       toast({
         title: "Not Supported",
-        description: "Voice input is not supported in your browser.",
+        description: "Speech recognition is not supported in your browser. Try Chrome or Edge.",
         variant: "destructive",
       });
       return;
     }
 
-    try {
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart = () => {
       setIsRecording(true);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      const audioChunks: Blob[] = [];
+      console.log('Browser STT started');
+    };
 
-      mediaRecorder.ondataavailable = (event) => {
-        audioChunks.push(event.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
-        const formData = new FormData();
-        formData.append("file", audioBlob, "recording.wav");
-
-        try {
-          const response = await fetch(`${API_BASE_URL}/stt`, {
-            method: "POST",
-            body: formData,
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            setInput(data.transcript || "");
-            toast({
-              title: "Voice Recognized!",
-              description: "Your speech has been converted to text.",
-            });
-          } else {
-            throw new Error("Speech recognition failed");
-          }
-        } catch (error) {
-          toast({
-            title: "Voice Input Failed",
-            description: "Could not convert speech to text. Please try again.",
-            variant: "destructive",
-          });
-        }
-
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorder.start();
-
-      // Stop recording after 5 seconds
-      setTimeout(() => {
-        if (mediaRecorder.state === "recording") {
-          mediaRecorder.stop();
-          setIsRecording(false);
-        }
-      }, 5000);
-
-    } catch (error) {
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      console.log('Browser STT result:', transcript);
+      setInput(transcript);
       toast({
-        title: "Microphone Error",
-        description: "Could not access microphone. Please check permissions.",
+        title: "Voice Recognized!",
+        description: "Your speech has been converted to text.",
+      });
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error('Browser STT error:', event.error);
+      toast({
+        title: "Voice Input Failed",
+        description: `Speech recognition error: ${event.error}`,
         variant: "destructive",
       });
       setIsRecording(false);
-    }
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+      console.log('Browser STT ended');
+    };
+
+    recognition.start();
   };
 
-  const handleTextToSpeech = async (text: string) => {
+  // Browser-native Text-to-Speech - No API needed!
+  const handleTextToSpeechBrowser = (text: string) => {
     if (isSpeaking) {
-      audioRef.current?.pause();
+      window.speechSynthesis.cancel();
       setIsSpeaking(false);
       toast({
         title: "Audio Stopped",
@@ -246,73 +227,56 @@ const AIChatbot = () => {
       return;
     }
 
-    try {
-      setIsSpeaking(true);
-
-      // Add timeout for TTS request
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
-
-      const response = await fetch(`${API_BASE_URL}/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, language_code: "en" }),
-        signal: controller.signal,
+    if (!window.speechSynthesis) {
+      toast({
+        title: "Not Supported",
+        description: "Text-to-speech is not supported in your browser.",
+        variant: "destructive",
       });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const audioBlob = await response.blob();
-        const audioUrl = URL.createObjectURL(audioBlob);
-
-        if (audioRef.current) {
-          audioRef.current.pause();
-        }
-
-        const audio = new Audio(audioUrl);
-        audioRef.current = audio;
-
-        audio.onended = () => {
-          setIsSpeaking(false);
-          URL.revokeObjectURL(audioUrl);
-        };
-
-        audio.onerror = () => {
-          setIsSpeaking(false);
-          URL.revokeObjectURL(audioUrl);
-          toast({
-            title: "Playback Error",
-            description: "Could not play audio.",
-            variant: "destructive",
-          });
-        };
-
-        audio.play();
-
-        toast({
-          title: "Playing Audio",
-          description: "Listen to the AI response.",
-        });
-      } else {
-        throw new Error("TTS failed");
-      }
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-        toast({
-          title: "Request Timeout",
-          description: "Text-to-speech took too long. Please try again.",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Text-to-Speech Failed",
-          description: "Could not convert text to speech. Please try again.",
-          variant: "destructive",
-        });
-      }
-      setIsSpeaking(false);
+      return;
     }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      console.log('Browser TTS started');
+      toast({
+        title: "Playing Audio",
+        description: "Listen to the AI response.",
+      });
+    };
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      console.log('Browser TTS ended');
+    };
+
+    utterance.onerror = (event) => {
+      console.error('Browser TTS error:', event);
+      setIsSpeaking(false);
+      toast({
+        title: "Text-to-Speech Failed",
+        description: "Could not play audio.",
+        variant: "destructive",
+      });
+    };
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // Main voice input handler - uses browser API (no rate limits!)
+  const handleVoiceInput = () => {
+    handleVoiceInputBrowser();
+  };
+
+  // Main TTS handler - uses browser API (no rate limits!)
+  const handleTextToSpeech = (text: string) => {
+    handleTextToSpeechBrowser(text);
   };
 
   const clearChat = () => {
