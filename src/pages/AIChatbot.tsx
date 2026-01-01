@@ -45,7 +45,7 @@ const AIChatbot = () => {
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Backend API URL - Uses environment variable or defaults to Render deployment
-  const API_BASE_URL = import.meta.env.VITE_FITBOT_API_URL || "https://fitbot-api-cks6.onrender.com";
+  const API_BASE_URL = import.meta.env.VITE_FITBOT_API_URL || "https://fyp-assistent.onrender.com";
 
   useEffect(() => {
     checkAuth();
